@@ -16,7 +16,7 @@ export async function run(provider: NetworkProvider) {
 
     const jettonMinterCode = await compile('JettonMinter');
     const jettonWalletCodeRaw = await compile('JettonWallet');
-    const jettonWalletCode = jettonWalletCodeFromLibrary(jettonWalletCodeRaw);
+    // const jettonWalletCode = jettonWalletCodeFromLibrary(jettonWalletCodeRaw);
 
     const jettonMinterAddress = await promptUserFriendlyAddress("Enter the address of the jetton minter", ui, isTestnet);
 
@@ -25,7 +25,7 @@ export async function run(provider: NetworkProvider) {
             jettonMinterContract,
             adminAddress,
             decimals
-        } = await checkJettonMinter(jettonMinterAddress, jettonMinterCode, jettonWalletCode, provider, ui, isTestnet, true);
+        } = await checkJettonMinter(jettonMinterAddress, jettonMinterCode, jettonWalletCodeRaw, provider, ui, isTestnet, true);
 
         if (!provider.sender().address!.equals(adminAddress)) {
             ui.write('You are not admin of this jetton minter');

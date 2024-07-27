@@ -11,12 +11,15 @@ const op::provide_wallet_address = 0x2c76b973;
 const op::take_wallet_address = 0xd1735400;
 
 const op::top_up = 0xd372158c;
+const op::mint_from_wallet = 0x310bfd88;
 
 const error::invalid_op = 72;
 const error::wrong_op = 0xffff;
 const error::not_owner = 73;
 const error::not_valid_wallet = 74;
 const error::wrong_workchain = 333;
+
+const int op::withdraw = 0x46ed2e94;
 
 ;; jetton-minter
 
@@ -29,9 +32,9 @@ const op::change_metadata_uri = 0xcb862902;
 
 ;; jetton-wallet
 
-const op::set_status = 0xeed236d3;
+const op::set_locked_balance = 0xeed236d3; ;; wrong id need to be recounted
 
-const error::contract_locked = 45;
+const error::balance_locked = 45;
 const error::balance_error = 47;
 const error::not_enough_gas = 48;
 const error::invalid_message = 49;

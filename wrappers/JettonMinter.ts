@@ -317,23 +317,23 @@ export class JettonMinter implements Contract {
         });
     }
 
-    static lockWalletMessage(lock_address: Address, lock: number, amount: bigint, query_id: bigint | number = 0) {
+    static lockWalletMessage(lock_address: Address, locked_balance: bigint, amount: bigint, query_id: bigint | number = 0) {
         return beginCell().storeUint(Op.call_to, 32).storeUint(query_id, 64)
             .storeAddress(lock_address)
             .storeCoins(amount)
-            .storeRef(beginCell().storeUint(Op.set_status, 32).storeUint(query_id, 64).storeUint(lock, 4).endCell())
+            .storeRef(beginCell().storeUint(Op.set_locked_balance, 32).storeUint(query_id, 64).storeCoins(locked_balance).endCell())
             .endCell();
     }
 
     static parseSetStatus(slice: Slice) {
         const op = slice.loadUint(32);
-        if (op !== Op.set_status) throw new Error('Invalid op');
+        if (op !== Op.set_locked_balance) throw new Error('Invalid op');
         const queryId = slice.loadUint(64);
-        const newStatus = slice.loadUint(4);
+        const newLockedBalance = slice.loadCoins();
         endParse(slice);
         return {
             queryId,
-            newStatus
+            newLockedBalance
         }
     }
 
@@ -353,12 +353,10 @@ export class JettonMinter implements Contract {
         }
     }
 
-    async sendLockWallet(provider: ContractProvider, via: Sender, lock_address: Address, lock: LockType, amount: bigint = toNano('0.1'), query_id: bigint | number = 0) {
-        const lockCmd: number = lockTypeToInt(lock);
-
+    async sendLockWallet(provider: ContractProvider, via: Sender, lock_address: Address, locked_balance: bigint, amount: bigint = toNano('0.1'), query_id: bigint | number = 0) {
         await provider.internal(via, {
             sendMode: SendMode.PAY_GAS_SEPARATELY,
-            body: JettonMinter.lockWalletMessage(lock_address, lockCmd, amount, query_id),
+            body: JettonMinter.lockWalletMessage(lock_address, locked_balance, amount, query_id),
             value: amount + toNano('0.1')
         });
     }
@@ -543,5 +541,14 @@ export class JettonMinter implements Contract {
     async getNextAdminAddress(provider: ContractProvider) {
         const res = await provider.get('get_next_admin_address', []);
         return res.stack.readAddressOpt();
+    }
+
+    async getTonBalance(provider: ContractProvider) {
+        let state = await provider.getState();
+        if (state.state.type !== 'active') {
+            return 0n;
+        }
+        let res = await provider.get('get_ton_balance', []);
+        return res.stack.readBigNumber();
     }
 }

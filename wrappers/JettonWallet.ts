@@ -1,4 +1,4 @@
-import { Address, beginCell, Cell, Contract, contractAddress, ContractProvider, Sender, SendMode, toNano } from '@ton/core';
+import { Address, beginCell, Cell, Contract, contractAddress, ContractProvider, Sender, SendMode, toNano, Slice } from '@ton/core';
 import { Op } from './JettonConstants';
 import {endParse} from "./JettonMinter";
 
@@ -9,7 +9,7 @@ export type JettonWalletConfig = {
 
 export function jettonWalletConfigToCell(config: JettonWalletConfig): Cell {
     return beginCell()
-        .storeUint(0, 4) // status
+        .storeCoins(0) // locked_balance
         .storeCoins(0) // jetton balance
         .storeAddress(config.ownerAddress)
         .storeAddress(config.jettonMasterAddress)
@@ -19,7 +19,7 @@ export function jettonWalletConfigToCell(config: JettonWalletConfig): Cell {
 export function parseJettonWalletData(data: Cell) {
     const sc = data.beginParse()
     const parsed = {
-        status: sc.loadUint(4),
+        locked_balance: sc.loadCoins(),
         balance: sc.loadCoins(),
         ownerAddress: sc.loadAddress(),
         jettonMasterAddress: sc.loadAddress(),
@@ -66,13 +66,32 @@ export class JettonWallet implements Contract {
         let res = await provider.get('get_wallet_data', []);
         return res.stack.readBigNumber();
     }
-    async getWalletStatus(provider: ContractProvider) {
+
+    async getTonBalance(provider: ContractProvider) {
+        let state = await provider.getState();
+        if (state.state.type !== 'active') {
+            return 0n;
+        }
+        let res = await provider.get('get_ton_balance', []);
+        return res.stack.readBigNumber();
+    }
+
+    async getInfoVersion(provider: ContractProvider) {
+        let state = await provider.getState();
+        if (state.state.type !== 'active') {
+            return 0n;
+        }
+        let res = await provider.get('get_info_version', []);
+        return res.stack.readBigNumber();
+    }
+
+    async getWalletLockedBalance(provider: ContractProvider) {
         let state = await provider.getState();
         if (state.state.type !== 'active') {
             return 0;
         }
-        let res = await provider.get('get_status', []);
-        return res.stack.readNumber();
+        let res = await provider.get('get_locked_balance', []);
+        return res.stack.readBigNumber();
     }
     static transferMessage(jetton_amount: bigint, to: Address,
                            responseAddress:Address | null,
@@ -89,6 +108,57 @@ export class JettonWallet implements Contract {
                           .storeMaybeRef(forwardPayload)
                .endCell();
     }
+
+    static lockBalanceMessage(amount: bigint) {
+        return beginCell().storeUint(Op.set_locked_balance, 32).storeUint(0, 64) // op, queryId
+                          .storeCoins(amount)
+               .endCell();
+    }
+
+    async sendLockBalance(provider: ContractProvider, via: Sender, amount: bigint, value: bigint = toNano('0.1')) {
+        return provider.internal(via, {
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            body: JettonWallet.lockBalanceMessage(amount),
+            value: value,
+        });
+    }
+
+    static topUpMessage() {
+        return beginCell().storeUint(Op.top_up, 32).storeUint(0, 64) // op, queryId
+            .endCell();
+    }
+
+    static parseTopUp(slice: Slice) {
+        const op = slice.loadUint(32);
+        if (op !== Op.top_up) throw new Error('Invalid op');
+        const queryId = slice.loadUint(64);
+        endParse(slice);
+        return {
+            queryId,
+        }
+    }
+
+    async sendTopUp(provider: ContractProvider, via: Sender, value: bigint = toNano('0.1')) {
+        await provider.internal(via, {
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            body: JettonWallet.topUpMessage(),
+            value: value,
+        });
+    }
+
+    static withdrawMessage() {
+        return beginCell().storeUint(Op.withdraw, 32).storeUint(0, 64) // op, queryId
+            .endCell();
+    }
+
+    async sendWithdraw(provider: ContractProvider, via: Sender, value: bigint = toNano('0.1')) {
+        await provider.internal(via, {
+            sendMode: SendMode.PAY_GAS_SEPARATELY,
+            body: JettonWallet.withdrawMessage(),
+            value: value,
+        });
+    }
+
     async sendTransfer(provider: ContractProvider, via: Sender,
                               value: bigint,
                               jetton_amount: bigint, to: Address,

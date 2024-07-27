@@ -17,7 +17,7 @@ export async function run(provider: NetworkProvider) {
 
     const jettonMinterCode = await compile('JettonMinter');
     const jettonWalletCodeRaw = await compile('JettonWallet');
-    const jettonWalletCode = jettonWalletCodeFromLibrary(jettonWalletCodeRaw);
+    const jettonWalletCode = jettonWalletCodeRaw;
 
     const jettonMinterAddress = await promptUserFriendlyAddress("Enter the address of the jetton minter", ui, isTestnet);
 

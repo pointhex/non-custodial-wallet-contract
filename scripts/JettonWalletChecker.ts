@@ -82,7 +82,7 @@ export const checkJettonWallet = async (
     assert(getData.minter.equals(parsedData.jettonMasterAddress), "Jetton master address doesn't match", ui);
     assert(getData.wallet_code.equals(jettonWalletCode), "Jetton wallet code doesn't match", ui);
 
-    assert((await jettonWalletContract.getWalletStatus()) === parsedData.status, "Jetton wallet status doesn't match", ui);
+    // assert((await jettonWalletContract.getWalletLockedBalance()) === parsedData.status, "Jetton wallet status doesn't match", ui);
 
     // StateInit
 
@@ -97,7 +97,7 @@ export const checkJettonWallet = async (
 
     // Print
 
-    write('Jetton-wallet status: ' + lockTypeToName(intToLockType(parsedData.status)));
+    write('Jetton-wallet locked balnce: ' +  fromUnits(parsedData.locked_balance, decimals));
     write('Balance: ' + fromUnits(parsedData.balance, decimals));
     write('Owner address: ' + (await formatAddressAndUrl(parsedData.ownerAddress, provider, isTestnet)));
     write('Jetton-minter address: ' + (await formatAddressAndUrl(parsedData.jettonMasterAddress, provider, isTestnet)));

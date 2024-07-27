@@ -111,6 +111,13 @@ top_up#d372158c
   query_id:uint64
   = InternalMsgBody;
 
+// wrong code for now
+mint_from_wallet#310bfd88 
+  query_id:uint64
+  to_address:MsgAddressInt
+  ton_amount:Coins
+  = JettonMsg;
+
 set_status#eed236d3
   query_id:uint64
   status:uint4

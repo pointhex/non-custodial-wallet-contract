@@ -1,4 +1,4 @@
-;; Jetton Wallet Smart Contract
+;; Jetton Wallet Smart Contract my
 
 #pragma version >=0.4.3;
 
@@ -8,23 +8,10 @@
 #include "jetton-utils.fc";
 #include "gas.fc";
 
-{-
-  Storage
-
-  Note, status==0 means unlocked - user can freely transfer and recieve jettons (only admin can burn).
-        (status & 1) bit means user can not send jettons
-        (status & 2) bit means user can not receive jettons.
-  Master (minter) smart-contract able to make outgoing actions (transfer, burn jettons) with any status.
-
-  storage#_ status:uint4
-            balance:Coins owner_address:MsgAddressInt
-            jetton_master_address:MsgAddressInt = Storage;
--}
-
 (int, int, slice, slice) load_data() inline {
     slice ds = get_data().begin_parse();
     var data = (
-        ds~load_uint(STATUS_SIZE), ;; status
+        ds~load_coins(), ;; locked_balance
         ds~load_coins(), ;; balance
         ds~load_msg_addr(), ;; owner_address
         ds~load_msg_addr() ;; jetton_master_address
@@ -33,8 +20,18 @@
     return data;
 }
 
-() save_data(int status, int balance, slice owner_address, slice jetton_master_address) impure inline {
-    set_data(pack_jetton_wallet_data(status, balance, owner_address, jetton_master_address));
+() save_data(int locked_balance, int balance, slice owner_address, slice jetton_master_address) impure inline {
+    set_data(pack_jetton_wallet_data(locked_balance, balance, owner_address, jetton_master_address));
+}
+
+int check_balance_is_enough(int jetton_amount) inline {
+    (int locked_balance, int balance, _, _) = load_data();
+    int enough_jettons = (balance - locked_balance) >= jetton_amount;
+
+    int ton_balance = get_balance().pair_first();
+    int enough_tons = ton_balance - locked_balance >= jetton_amount;
+    
+    return enough_jettons & enough_tons;
 }
 
 () send_jettons(slice in_msg_body, slice sender_address, int msg_value, int fwd_fee) impure inline_ref {
@@ -43,14 +40,12 @@
     int jetton_amount = in_msg_body~load_coins();
     slice to_owner_address = in_msg_body~load_msg_addr();
     check_same_workchain(to_owner_address);
-    (int status, int balance, slice owner_address, slice jetton_master_address) = load_data();
-    int is_from_master = equal_slices_bits(jetton_master_address, sender_address);
-    int outgoing_transfers_unlocked = ((status & 1) == 0);
-    throw_unless(error::contract_locked, outgoing_transfers_unlocked | is_from_master);
-    throw_unless(error::not_owner, equal_slices_bits(owner_address, sender_address) | is_from_master);
+    (int locked_balance, int balance, slice owner_address, slice jetton_master_address) = load_data();
 
+    int is_from_master = equal_slices_bits(jetton_master_address, sender_address);
+    throw_unless(error::not_owner, equal_slices_bits(owner_address, sender_address) | is_from_master);
+    throw_unless(error::balance_error, check_balance_is_enough(jetton_amount));
     balance -= jetton_amount;
-    throw_unless(error::balance_error, balance >= 0);
 
     cell state_init = calculate_jetton_wallet_state_init(to_owner_address, jetton_master_address, my_code());
     slice to_wallet_address = calculate_jetton_wallet_address(state_init);
@@ -75,7 +70,7 @@
     cell msg = begin_cell()
     .store_msg_flags_and_address_none(BOUNCEABLE)
     .store_slice(to_wallet_address)
-    .store_coins(0)
+    .store_coins(jetton_amount)
     .store_statinit_ref_and_body_ref(state_init, msg_body)
     .end_cell();
 
@@ -83,17 +78,20 @@
 
     send_raw_message(msg, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE | SEND_MODE_BOUNCE_ON_ACTION_FAIL);
 
-    save_data(status, balance, owner_address, jetton_master_address);
+    save_data(locked_balance, balance, owner_address, jetton_master_address);
 }
 
 () receive_jettons(slice in_msg_body, slice sender_address, int my_ton_balance, int msg_value) impure inline_ref {
-    (int status, int balance, slice owner_address, slice jetton_master_address) = load_data();
-    int incoming_transfers_locked = ((status & 2) == 2);
-    throw_if(error::contract_locked, incoming_transfers_locked);
+    (int locked_balance, int balance, slice owner_address, slice jetton_master_address) = load_data();
     ;; see internal TL-B layout in jetton.tlb
     int query_id = in_msg_body~load_query_id();
     int jetton_amount = in_msg_body~load_coins();
+
     balance += jetton_amount;
+
+    ;; should be uncommented later
+    ;; throw_unless(error::balance_error, balance <= my_ton_balance);
+    
     slice from_address = in_msg_body~load_msg_addr();
     slice response_address = in_msg_body~load_msg_addr();
     throw_unless(error::not_valid_wallet,
@@ -101,6 +99,7 @@
         |
         equal_slices_bits(calculate_user_jetton_wallet_address(from_address, jetton_master_address, my_code()), sender_address)
     );
+
     int forward_ton_amount = in_msg_body~load_coins();
 
     if (forward_ton_amount) {
@@ -127,7 +126,7 @@
     }
 
     if (~ is_address_none(response_address)) {
-        int to_leave_on_balance = my_ton_balance - msg_value + my_storage_due();
+        int to_leave_on_balance = my_ton_balance + my_storage_due(); ;;- msg_value 
         raw_reserve(max(to_leave_on_balance, calculate_jetton_wallet_min_storage_fee()), RESERVE_AT_MOST);
 
         ;; build MessageRelaxed, see TL-B layout in stdlib.fc#L733
@@ -142,11 +141,11 @@
         send_raw_message(msg, SEND_MODE_CARRY_ALL_BALANCE | SEND_MODE_IGNORE_ERRORS);
     }
 
-    save_data(status, balance, owner_address, jetton_master_address);
+    save_data(locked_balance, balance, owner_address, jetton_master_address);
 }
 
 () burn_jettons(slice in_msg_body, slice sender_address, int msg_value) impure inline_ref {
-    (int status, int balance, slice owner_address, slice jetton_master_address) = load_data();
+    (int locked_balance, int balance, slice owner_address, slice jetton_master_address) = load_data();
     int query_id = in_msg_body~load_query_id();
     int jetton_amount = in_msg_body~load_coins();
     slice response_address = in_msg_body~load_msg_addr();
@@ -154,9 +153,15 @@
     in_msg_body.end_parse();
 
     balance -= jetton_amount;
-    int is_from_master = equal_slices_bits(jetton_master_address, sender_address);
+    ;; int ton_balance = get_balance().pair_first() - jetton_amount;
+    ;; int unlocked_balance = balance - locked_balance;
+    ;; int is_from_master = equal_slices_bits(jetton_master_address, sender_address);
+    int is_from_master = equal_slices_bits(owner_address, sender_address);
     throw_unless(error::not_owner, is_from_master);
     throw_unless(error::balance_error, balance >= 0);
+    ;; throw_unless(error::balance_error, ton_balance >= 0);
+    ;; throw_unless(error::balance_error, unlocked_balance >= 0);
+    
 
     ;; see burn_notification TL-B layout in jetton.tlb
     cell msg_body = begin_cell()
@@ -179,20 +184,34 @@
 
     send_raw_message(msg, SEND_MODE_CARRY_ALL_REMAINING_MESSAGE_VALUE | SEND_MODE_BOUNCE_ON_ACTION_FAIL);
 
-    save_data(status, balance, owner_address, jetton_master_address);
+     cell msg = begin_cell()
+            .store_msg_flags_and_address_none(NON_BOUNCEABLE)
+            .store_slice(owner_address)
+            .store_coins(jetton_amount)
+            .store_prefix_only_body()
+            .store_op(op::excesses)
+            .store_query_id(query_id)
+            .end_cell();
+    send_raw_message(msg, SEND_MODE_IGNORE_ERRORS | SEND_MODE_PAY_FEES_SEPARATELY);
+
+    save_data(locked_balance, balance, owner_address, jetton_master_address);
 }
 
 () on_bounce(slice in_msg_body) impure inline {
     in_msg_body~skip_bounced_prefix();
-    (int status, int balance, slice owner_address, slice jetton_master_address) = load_data();
+    (int locked_balance, int balance, slice owner_address, slice jetton_master_address) = load_data();
     int op = in_msg_body~load_op();
     throw_unless(error::wrong_op, (op == op::internal_transfer) | (op == op::burn_notification));
     in_msg_body~skip_query_id();
     int jetton_amount = in_msg_body~load_coins();
-    save_data(status, balance + jetton_amount, owner_address, jetton_master_address);
+    save_data(locked_balance, balance + jetton_amount, owner_address, jetton_master_address);
 }
 
 () recv_internal(int my_ton_balance, int msg_value, cell in_msg_full, slice in_msg_body) impure {
+    ;; if (in_msg_body.slice_empty?()) { ;; ignore empty messages
+    ;;     return ();
+    ;; }
+
     slice in_msg_full_slice = in_msg_full.begin_parse();
     int msg_flags = in_msg_full_slice~load_msg_flags();
     if (msg_flags & 1) { ;; is bounced
@@ -223,18 +242,85 @@
         return ();
     }
 
-    if (op == op::set_status) {
-        in_msg_body~skip_query_id();
-        int new_status = in_msg_body~load_uint(STATUS_SIZE);
+
+    int query_id = in_msg_body~load_query_id();
+    if (op == op::set_locked_balance) {
+        int locked_balance = in_msg_body~load_coins();
         in_msg_body.end_parse();
         (_, int balance, slice owner_address, slice jetton_master_address) = load_data();
-        throw_unless(error::not_valid_wallet, equal_slices_bits(sender_address, jetton_master_address));
-        save_data(new_status, balance, owner_address, jetton_master_address);
+        throw_unless(error::not_valid_wallet,
+                     equal_slices_bits(sender_address, jetton_master_address)
+                     | equal_slices_bits(sender_address, owner_address));
+        save_data(locked_balance, balance, owner_address, jetton_master_address);
         return ();
     }
 
     if (op == op::top_up) {
+        (int locked_balance, int balance, slice owner_address, slice jetton_master_address) = load_data();
+        ;; int ton_balance = get_balance().pair_first() - msg_value;
+        ;; think about that check maybe better to have just separete op for that and top_up
+        if (equal_slices_bits(sender_address, owner_address)) { 
+
+            int amount =  200000000; ;; 0.2 TON for sending messages
+
+            ;; int ton_rest = ton_balance - balance;
+            ;; int add_for_keep_on_workchain = 0;
+            ;; if (ton_rest < ONE_TON) { ;; keep at least 1 TON on workchain
+            ;;     add_for_keep_on_workchain = ONE_TON - ton_rest;
+            ;; }
+
+            int jetton_amount = msg_value - amount; ;; - add_for_keep_on_workchain;
+            int add_for_keep_on_workchain = get_balance().pair_first() - balance - msg_value - ONE_TON;
+            if (add_for_keep_on_workchain < 0) {
+                jetton_amount += add_for_keep_on_workchain;
+            }
+
+            if (jetton_amount < 0) {
+                return ();
+            }
+
+            cell msg_body = begin_cell()
+            .store_op(op::mint_from_wallet)
+            .store_query_id(query_id)
+            .store_slice(owner_address)
+            .store_coins(jetton_amount)
+            .end_cell();
+
+            cell msg = begin_cell()
+            .store_uint(0x18, 6)
+            .store_slice(jetton_master_address)
+            .store_coins(amount) ;; forward_ton_amount
+            .store_only_body_ref(msg_body)
+            .end_cell();
+
+            send_raw_message(msg, SEND_MODE_IGNORE_ERRORS | SEND_MODE_PAY_FEES_SEPARATELY);
+        }
+
+        save_data(locked_balance, balance, owner_address, jetton_master_address);
         return (); ;; just accept tons
+    }
+
+    if (op == op::withdraw) {
+        (int locked_balance, int balance, slice owner_address, slice jetton_master_address) = load_data();
+        ;; throw_unless(error::unauthorized_transfer, equal_slice_bits(owner_address, sender_address));
+        ;; raw_reserve(min_tons_for_storage, 0);
+        ;; var msg = begin_cell()
+        ;;         .store_msg_flags_and_address_none(NON_BOUNCEABLE)
+        ;;         .store_slice(owner_address)
+        ;;         .store_coins(0)
+        ;;         .store_msgbody_prefix_slice()
+        ;;         .store_op(op::excesses)
+        ;;         .store_query_id(in_msg_body~load_query_id());
+
+        cell msg = begin_cell()
+            .store_msg_flags_and_address_none(NON_BOUNCEABLE)
+            .store_slice(owner_address)
+            .store_coins(0)
+            .store_prefix_only_body()
+            .store_op(op::excesses)
+            .store_query_id(query_id)
+            .end_cell();
+        return send_raw_message(msg, SEND_MODE_CARRY_ALL_BALANCE | SEND_MODE_IGNORE_ERRORS);
     }
 
     throw(error::wrong_op);
@@ -245,7 +331,15 @@
     return (balance, owner_address, jetton_master_address, my_code());
 }
 
-int get_status() method_id {
-    (int status, _, _, _) = load_data();
-    return status;
+int get_ton_balance() method_id {
+    return get_balance().pair_first();
+}
+
+int get_locked_balance() method_id {
+    (int locked_balance, _, _, _) = load_data();
+    return locked_balance;
+}
+
+int get_info_version() method_id {
+    return get_balance().pair_first();
 }

@@ -15,7 +15,9 @@ export abstract class Op {
     static call_to = 0x235caf52;
     static top_up = 0xd372158c;
     static change_metadata_url = 0xcb862902;
-    static set_status = 0xeed236d3;
+    static set_locked_balance = 0xeed236d3; // wrong id for now
+
+    static withdraw = 0x46ed2e94;
 }
 
 export abstract class Errors {
